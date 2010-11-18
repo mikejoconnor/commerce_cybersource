@@ -8,23 +8,49 @@
 
 /**
  * Implementation of hook_requirements().
- *
+ */
 function commerce_cybersource_requirements($phase) {
   $t = get_t();
 
-  $has_curl = function_exists('curl_init');
+  $has_soap = class_exists('SoapClient');
+  $has_libxml = class_exists('libXMLError');
+  $has_openssl = defined('OPENSSL_VERSION_TEXT');
 
-  $requirements['commerce_authnet_curl'] = array(
-    'title' => $t('cURL'),
-    'value' => $has_curl ? $t('Enabled') : $t('Not found'),
+  $requirements['commerce_cybersource_soap'] = array(
+    'title' => $t('SOAP'),
+    'value' => $has_soap ? $t('Enabled') : $t('Not found'),
   );
 
-  if (!$has_curl) {
-    $requirements['commerce_authnet_curl'] += array(
+  if (!$has_soap) {
+    $requirements['commerce_cybersource_soap'] += array(
       'severity' => REQUIREMENT_ERROR,
-      'description' => $t("Authorize.Net requires the PHP <a href='!curl_url'>cURL</a> library.", array('!curl_url' => 'http://php.net/manual/en/curl.setup.php')),
+      'description' => $t('CyberSource requires the PHP <a href="!soap_url">SOAP extension</a>.', array('!soap_url' => 'http://php.net/manual/en/book.soap.php')),
+    );
+  }
+
+  $requirements['commerce_cybersource_libxml'] = array(
+    'title' => $t('libxml'),
+    'value' => $has_libxml ? $t('Enabled (@version)', array('@version' => LIBXML_DOTTED_VERSION)) : $t('Not found'),
+  );
+
+  if (!$has_libxml) {
+    $requirements['commerce_cybersource_libxml'] += array(
+      'severity' => REQUIREMENT_ERROR,
+      'description' => $t('CyberSource requires the PHP <a href="!libxml_url">libxml extension</a>.', array('!libxml_url' => 'http://php.net/manual/en/book.libxml.php')),
+    );
+  }
+
+  $requirements['commerce_cybersource_openssl'] = array(
+    'title' => $t('OpenSSL'),
+    'value' => $has_openssl ? $t('Enablied (@version)', array('@version' => OPENSSL_VERSION_TEXT)) : $t('Not found'),
+  );
+
+  if (!$has_openssl) {
+    $requirements['commerce_cybersource_openssl'] += array(
+      'severity' => REQUIREMENT_ERROR,
+      'description' => $t('CyberSource requires the PHP <a href="!openssl_url">OpenSSL extension</a>.', array('!openssl_url' => 'http://php.net/manual/en/book.openssl.php')),
     );
   }
 
   return $requirements;
-}*/
+}
