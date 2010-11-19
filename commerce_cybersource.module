@@ -13,15 +13,15 @@ define('CYBERSOURCE_TXN_MODE_TEST', 'test');
 
 /**
  * Implements hook_menu().
- *
+ */
 function commerce_cybersource_menu() {
   $items = array();
 
   // Add a menu item for capturing authorizations.
-  $items['admin/commerce/orders/%commerce_order/payment/%commerce_payment_transaction/authnet-aim-capture'] = array(
+  $items['admin/commerce/orders/%commerce_order/payment/%commerce_payment_transaction/cybersource-soap-capture'] = array(
     'title' => 'Capture',
     'page callback' => 'drupal_get_form',
-    'page arguments' => array('commerce_authnet_aim_capture_form', 3, 5),
+    'page arguments' => array('commerce_cybersource_soap_capture_form', 3, 5),
     'access callback' => 'commerce_cybersource_soap_capture_access',
     'access arguments' => array(3, 5),
     'type' => MENU_DEFAULT_LOCAL_TASK,
@@ -48,7 +48,7 @@ function commerce_cybersource_menu() {
 function commerce_cybersource_soap_capture_access($order, $transaction) {
   // Return FALSE if the transaction isn't for CyberSource SOAP or isn't
   // awaiting capture.
-  if ($transaction->payment_method != 'cybersource_soap_cc' || strtoupper($transaction->remote_status) != 'AUTH_ONLY') {
+  if ($transaction->payment_method != 'cybersource_soap_cc' || strpos($transaction->remote_status, COMMERCE_CREDIT_AUTH_ONLY) !== 0) {
     return FALSE;
   }
 
@@ -165,7 +165,7 @@ function commerce_cybersource_soap_cc_submit_form_validate($payment_method, $pan
 function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_form, $pane_values, $order, $charge) {
   // Create and populate the request object.
   $request = (object) array(
-    'merchantReferenceCode' => $order->order_number,
+    'merchantReferenceCode' => t('Order @number', array('@number' => $order->order_number)),
   );
 
   // Request an authorization that may also be captured this request. Whether
@@ -221,6 +221,13 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
   $request->item = array($item0, $item1);
    */
 
+  // Add the capture directive if specified in the payment method settings.
+  if ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
+    $request->ccCaptureService = (object) array(
+      'run' => 'true',
+    );
+  }
+
   if ($response = commerce_cybersource_soap_api_request($payment_method, $request)) {
     // Prepare a transaction object to log the API response.
     $transaction = commerce_payment_transaction_new('cybersource_soap_cc', $order->order_id);
@@ -236,18 +243,26 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
       $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
     }
     else {
-      // Otherwise this must have been a successful authorization.
-      $transaction->status = COMMERCE_PAYMENT_STATUS_PENDING;
-    }
+      // Otherwise if we also captured successfully, mark this as a success.
+      if ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE &&
+        $response->ccCaptureReply->reasonCode == 100) {
+        $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
+        $transaction->remote_status = COMMERCE_CREDIT_AUTH_CAPTURE;
+      }
+      else {
+        // Or leave it pending.
+        $transaction->status = COMMERCE_PAYMENT_STATUS_PENDING;
 
-    // Store the transaction type with the timestamp so the request token can be
-    // reliably retrieved later for capturing.
-    $transaction->remote_status = COMMERCE_CREDIT_AUTH_ONLY . ':' . REQUEST_TIME;
+        // Store the transaction type with the timestamp so the request token can be
+        // reliably retrieved later for capturing.
+        $transaction->remote_status = COMMERCE_CREDIT_AUTH_ONLY . ':' . REQUEST_TIME;
+      }
+    }
 
     // Build a meaningful response message.
     $message = array(
-      '<b>' . t('Credit Card Authorization') . '</b>',
-      '<b>' . t('@decision:', array('@decision' => $response->decision)) . '</b> ' . commerce_cybersource_reason_message($response->ccAuthReply->reasonCode),
+      '<b>' . ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_ONLY ? t('Credit Card Authorization') : t('Credit Card Authorization and Capture')) . '</b>',
+      '<b>' . t('@decision:', array('@decision' => $response->decision)) . '</b> ' . commerce_cybersource_reason_message($response->reasonCode),
     );
 
     // Add an AVS response if returned.
@@ -276,10 +291,61 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     drupal_set_message(t('We encountered an error contacting our payment processor. Please try submitting your payment again.'), 'error');
     return FALSE;
   }
+}
 
-  // TODO: Capture the payment now if specified.
-  if ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
+/**
+ * Submits a prior authorization capture request.
+ */
+function commerce_cybersource_soap_capture($order, $transaction, $amount) {
+  // Load the payment method instance used to create the authorization.
+  $payment_method = commerce_payment_method_instance_load($transaction->instance_id);
 
+  // Extract the timestamp used to retrieve the order request token from the
+  // remote status value.
+  list($status, $timestamp) = explode(':', $transaction->remote_status);
+
+  // Fail now if now timestamp was found or the payload is missing.
+  if (empty($timestamp) || empty($transaction->payload[$timestamp])) {
+    return FALSE;
+  }
+
+  // Create and populate the request object.
+  $request = (object) array(
+    'merchantReferenceCode' => t('Order @number', array('@number' => $order->order_number)),
+    'orderRequestToken' => $transaction->payload[$timestamp]->requestToken,
+  );
+
+  // Add purchase total information.
+  $request->purchaseTotals = (object) array(
+    'currency' => $transaction->currency_code,
+    'grandTotalAmount' => $amount,
+  );
+
+  // Add the capture service information.
+  $request->ccCaptureService = (object) array(
+    'run' => 'true',
+    'authRequestID' => $transaction->remote_id,
+  );
+
+  if ($response = commerce_cybersource_soap_api_request($payment_method, $request)) {
+    // Add the response to the payload.
+    $transaction->payload[REQUEST_TIME] = $response;
+
+    if ($response->ccCaptureReply->reasonCode == 100) {
+      // Update the amount in case it changed between authorization and capture.
+      $transaction->amount = $response->ccCaptureReply->amount;
+
+      // Update the transaction status and remote status.
+      $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
+      $transaction->remote_status = COMMERCE_CREDIT_PRIOR_AUTH_CAPTURE . ':' . REQUEST_TIME;
+    }
+
+    commerce_payment_transaction_save($transaction);
+
+    return $response;
+  }
+  else {
+    return FALSE;
   }
 }
 
@@ -311,10 +377,11 @@ function commerce_cybersource_soap_api_request($payment_method, $request) {
   if ($payment_method->settings['log']['request'] == 'request') {
     // Get our clone on to avoid messing up the legit data.
     $log_request = clone($request);
-    $log_request->card = clone($log_request->card);
 
     // Mask the credit card number and CVV.
     if (!empty($log_request->card)) {
+      $log_request->card = clone($log_request->card);
+
       $log_request->card->accountNumber = str_repeat('X', strlen($log_request->card->accountNumber) - 4) . substr($log_request->card->accountNumber, -4);
 
       if (!empty($log_request->card->cavv)) {
