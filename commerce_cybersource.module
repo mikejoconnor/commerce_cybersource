@@ -222,7 +222,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
    */
 
   // Add the capture directive if specified in the payment method settings.
-  if ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
+  if ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
     $request->ccCaptureService = (object) array(
       'run' => 'true',
     );
@@ -231,7 +231,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
   if ($response = commerce_cybersource_soap_api_request($payment_method, $request)) {
     // Prepare a transaction object to log the API response.
     $transaction = commerce_payment_transaction_new('cybersource_soap_cc', $order->order_id);
-    $transaction->instance_id = $payment_method->instance_id;
+    $transaction->instance_id = $payment_method['instance_id'];
     $transaction->remote_id = $response->requestID;
     $transaction->amount = $charge['amount'];
     $transaction->currency_code = $charge['currency_code'];
@@ -244,7 +244,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     }
     else {
       // Otherwise if we also captured successfully, mark this as a success.
-      if ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE &&
+      if ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE &&
         $response->ccCaptureReply->reasonCode == 100) {
         $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
         $transaction->remote_status = COMMERCE_CREDIT_AUTH_CAPTURE;
@@ -261,7 +261,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
 
     // Build a meaningful response message.
     $message = array(
-      '<b>' . ($payment_method->settings['transaction_type'] == COMMERCE_CREDIT_AUTH_ONLY ? t('Credit Card Authorization') : t('Credit Card Authorization and Capture')) . '</b>',
+      '<b>' . ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_ONLY ? t('Credit Card Authorization') : t('Credit Card Authorization and Capture')) . '</b>',
       '<b>' . t('@decision:', array('@decision' => $response->decision)) . '</b> ' . commerce_cybersource_reason_message($response->reasonCode),
     );
 
@@ -353,7 +353,7 @@ function commerce_cybersource_soap_capture($order, $transaction, $amount) {
  * Submits an API request through the CyberSource SOAP API Toolkit.
  *
  * @param $payment_method
- *   The payment method instance object associated with this API request.
+ *   The payment method instance array associated with this API request.
  * @param $request
  *   The request object containing the parameters of the requested services.
  *
@@ -363,10 +363,10 @@ function commerce_cybersource_soap_capture($order, $transaction, $amount) {
  */
 function commerce_cybersource_soap_api_request($payment_method, $request) {
   // Get the API endpoint URL for the method's transaction mode.
-  $url = commerce_cybersource_soap_wsdl_url($payment_method->settings['transaction_mode']);
+  $url = commerce_cybersource_soap_wsdl_url($payment_method['settings']['transaction_mode']);
 
   // Add the merchant ID to the request object.
-	$request->merchantID = $payment_method->settings['merchant_id'];
+	$request->merchantID = $payment_method['settings']['merchant_id'];
 
   // Add information on PHP for troubleshooting purposes.
 	$request->clientLibrary = 'PHP';
@@ -374,7 +374,7 @@ function commerce_cybersource_soap_api_request($payment_method, $request) {
   $request->clientEnvironment = php_uname();
 
   // Log the request if specified.
-  if ($payment_method->settings['log']['request'] == 'request') {
+  if ($payment_method['settings']['log']['request'] == 'request') {
     // Get our clone on to avoid messing up the legit data.
     $log_request = clone($request);
 
@@ -394,7 +394,7 @@ function commerce_cybersource_soap_api_request($payment_method, $request) {
 
   // Attempt the SOAP request and log the exception on failure.
   try {
-    $soapClient = new CommerceCyberSourceSoapClient($url, array(), $request->merchantID, $payment_method->settings['transaction_key']);
+    $soapClient = new CommerceCyberSourceSoapClient($url, array(), $request->merchantID, $payment_method['settings']['transaction_key']);
     $response = $soapClient->runTransaction($request);
   }
   catch (SoapFault $exception) {
@@ -403,7 +403,7 @@ function commerce_cybersource_soap_api_request($payment_method, $request) {
   }
 
   // Log the response if specified.
-  if ($payment_method->settings['log']['response'] == 'response') {
+  if ($payment_method['settings']['log']['response'] == 'response') {
     watchdog('commerce_cybersource', 'CyberSource SOAP response: !request', array('!request' => '<pre>' . check_plain(print_r($response, TRUE)) . '</pre>', WATCHDOG_DEBUG));
   }
 
