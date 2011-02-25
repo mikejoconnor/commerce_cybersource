@@ -1,4 +1,3 @@
-; $Id$
 name = CyberSource
 description = Implements CyberSource payment services for use with Drupal Commerce.
 package = Commerce (contrib)
