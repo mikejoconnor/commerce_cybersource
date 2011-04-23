@@ -203,7 +203,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
   // Add purchase total information.
   $request->purchaseTotals = (object) array(
     'currency' => $charge['currency_code'],
-    'grandTotalAmount' => $charge['amount'],
+    'grandTotalAmount' => commerce_currency_amount_to_decimal($charge['amount'], $charge['currency_code']),
   );
 
   /**
@@ -294,6 +294,13 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
 
 /**
  * Submits a prior authorization capture request.
+ *
+ * @param $order
+ *   The order object the payment is for.
+ * @param $transaction
+ *   The payment transaction representing the authorization the capture is for.
+ * @param $amount
+ *   An integer price amount.
  */
 function commerce_cybersource_soap_capture($order, $transaction, $amount) {
   // Load the payment method instance used to create the authorization.
@@ -317,7 +324,7 @@ function commerce_cybersource_soap_capture($order, $transaction, $amount) {
   // Add purchase total information.
   $request->purchaseTotals = (object) array(
     'currency' => $transaction->currency_code,
-    'grandTotalAmount' => $amount,
+    'grandTotalAmount' => commerce_currency_amount_to_decimal($amount, $transaction->currency_code),
   );
 
   // Add the capture service information.
@@ -332,7 +339,7 @@ function commerce_cybersource_soap_capture($order, $transaction, $amount) {
 
     if ($response->ccCaptureReply->reasonCode == 100) {
       // Update the amount in case it changed between authorization and capture.
-      $transaction->amount = $response->ccCaptureReply->amount;
+      $transaction->amount = commerce_currency_decimal_to_amount($response->ccCaptureReply->amount, $transaction->currency_code);
 
       // Update the transaction status and remote status.
       $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;

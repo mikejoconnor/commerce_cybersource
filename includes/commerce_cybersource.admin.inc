@@ -20,11 +20,14 @@ function commerce_cybersource_soap_capture_form($form, &$form_state, $order, $tr
   $balance = commerce_payment_order_balance($order);
 
   if ($balance['amount'] > 0 && $balance['amount'] < $transaction->amount) {
-    $default = $balance['amount'];
+    $default_amount = $balance['amount'];
   }
   else {
-    $default = $transaction->amount;
+    $default_amount = $transaction->amount;
   }
+
+  // Convert the price amount to a user friendly decimal value.
+  $default_amount = commerce_currency_amount_to_decimal($default_amount, $transaction->currency_code);
 
   $description = implode('<br />', array(
     t('Authorization: @amount', array('@amount' => commerce_currency_format($transaction->amount, $transaction->currency_code))),
@@ -35,7 +38,7 @@ function commerce_cybersource_soap_capture_form($form, &$form_state, $order, $tr
     '#type' => 'textfield',
     '#title' => t('Capture amount'),
     '#description' => $description,
-    '#default_value' => commerce_currency_round($default, commerce_currency_load($transaction->currency_code)),
+    '#default_value' => $default_amount,
     '#field_suffix' => check_plain($transaction->currency_code),
     '#size' => 16,
   );
@@ -58,8 +61,9 @@ function commerce_cybersource_soap_capture_form($form, &$form_state, $order, $tr
 function commerce_cybersource_soap_capture_form_submit($form, &$form_state) {
   $order = $form_state['order'];
   $transaction = $form_state['transaction'];
+  $amount = commerce_currency_decimal_to_amount($form_state['values']['amount'], $transaction->currency_code);
 
-  if ($response = commerce_cybersource_soap_capture($order, $transaction, $form_state['values']['amount'])) {
+  if ($response = commerce_cybersource_soap_capture($order, $transaction, $amount)) {
     // If the payment failed, display an error and rebuild the form.
     if ($response->ccCaptureReply->reasonCode != 100) {
       drupal_set_message(t('The capture failed with the following error: @reason', array('@reason' => commerce_cybersource_reason_message($response->ccCaptureReply->reasonCode))), 'error');
