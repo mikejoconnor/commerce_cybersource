@@ -162,6 +162,8 @@ function commerce_cybersource_soap_cc_submit_form_validate($payment_method, $pan
  * Payment method callback: checkout form submission.
  */
 function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_form, $pane_values, $order, $charge) {
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+
   // Create and populate the request object.
   $request = (object) array(
     'merchantReferenceCode' => t('Order @number', array('@number' => $order->order_number)),
@@ -174,16 +176,25 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     'run' => 'true',
   );
 
+  // Prepare the billing address for use in the request.
+  $billing_address = $order_wrapper->commerce_customer_billing->commerce_customer_address->value();
+
+  if (empty($billing_address['first_name'])) {
+    $name_parts = explode(' ', $billing_address['name_line']);
+    $billing_address['first_name'] = array_shift($name_parts);
+    $billing_address['last_name'] = implode(' ', $name_parts);
+  }
+
   // Add the billing information.
-  // TODO: Populate with data from the address field.
   $request->billTo = (object) array(
-    'firstName' => 'Joe',
-    'lastName' => 'Buyer',
-    'street1' => '500 Wombat Way',
-    'city' => 'Louisville',
-    'state' => 'KY',
-    'postalCode' => '40203',
-    'country' => 'US',
+    'firstName' => $billing_address['first_name'],
+    'lastName' => $billing_address['last_name'],
+    'street1' => $billing_address['thoroughfare'],
+    'street2' => $billing_address['premise'],
+    'city' => $billing_address['locality'],
+    'state' => $billing_address['administrative_area'],
+    'postalCode' => $billing_address['postal_code'],
+    'country' => $billing_address['country'],
     'email' => empty($order->mail) ? 'null@cybersource.com' : $order->mail,
     'ipAddress' => ip_address(),
   );
