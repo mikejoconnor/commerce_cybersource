@@ -73,19 +73,27 @@ function commerce_cybersource_commerce_payment_method_info() {
 }
 
 /**
- * Payment method callback: settings form.
+ * Returns the default settings for the CyberSource SOAP CC payment method.
  */
-function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
-  $form = array();
-
-  // Merge default settings into the stored settings array.
-  $settings = (array) $settings + array(
+function commerce_cybersource_soap_cc_default_settings() {
+  return array(
     'merchant_id' => '',
     'transaction_key' => '',
     'transaction_mode' => CYBERSOURCE_TXN_MODE_TEST,
     'transaction_type' => COMMERCE_CREDIT_AUTH_CAPTURE,
+    'card_types' => array(),
     'log' => array('request' => '0', 'response' => '0'),
   );
+}
+
+/**
+ * Payment method callback: settings form.
+ */
+function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
+  module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
+  $settings += commerce_cybersource_soap_cc_default_settings();
+
+  $form = array();
 
   $form['merchant_id'] = array(
     '#type' => 'textfield',
@@ -121,6 +129,13 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
     ),
     '#default_value' => $settings['transaction_type'],
   );
+  $form['card_types'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Limit accepted credit cards to the following types'),
+    '#description' => t('If none are checked, any credit card type will be accepted.'),
+    '#options' => commerce_payment_credit_card_types(),
+    '#default_value' => $settings['card_types'],
+  );
   $form['log'] = array(
     '#type' => 'checkboxes',
     '#title' => t('Log the following messages for debugging'),
@@ -139,7 +154,21 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
  */
 function commerce_cybersource_soap_cc_submit_form($payment_method, $pane_values, $checkout_pane, $order) {
   module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
-  return commerce_payment_credit_card_form(array('code' => ''));
+  $payment_method['settings'] += commerce_cybersource_soap_cc_default_settings();
+
+  // Prepare the fields to include on the credit card form.
+  $fields = array(
+    'code' => '',
+  );
+
+  // Add the credit card types array if necessary.
+  $card_types = array_diff(array_values($payment_method['settings']['card_types']), array(0));
+
+  if (!empty($card_types)) {
+    $fields['type'] = $card_types;
+  }
+
+  return commerce_payment_credit_card_form($fields);
 }
 
 /**
