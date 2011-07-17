@@ -80,9 +80,38 @@ function commerce_cybersource_soap_cc_default_settings() {
     'merchant_id' => '',
     'transaction_key' => '',
     'transaction_mode' => CYBERSOURCE_TXN_MODE_TEST,
-    'transaction_type' => COMMERCE_CREDIT_AUTH_CAPTURE,
-    'submit_itemized_order' => FALSE,
-    'card_types' => array(),
+    'credit_card' => array(
+      'transaction_type' => COMMERCE_CREDIT_AUTH_CAPTURE,
+      'submit_itemized_order' => FALSE,
+      'card_types' => array(),
+    ),
+    'tax' => array(
+      'calculate_taxes' => FALSE,
+      'nexus' => '',
+      'shipping_profile' => '',
+      'poo' => array(
+        'city' => '',
+        'state' => '',
+        'postal_code' => '',
+        'county' => '',
+        'country' => variable_get('site_default_country', ''),
+      ),
+      'poa' => array(
+        'city' => '',
+        'state' => '',
+        'postal_code' => '',
+        'county' => '',
+        'country' => variable_get('site_default_country', ''),
+      ),
+      'origin' => array(
+        'city' => '',
+        'state' => '',
+        'postal_code' => '',
+        'county' => '',
+        'country' => variable_get('site_default_country', ''),
+      ),
+      'seller_registration' => '',
+    ),
     'log' => array('request' => '0', 'response' => '0'),
   );
 }
@@ -93,6 +122,9 @@ function commerce_cybersource_soap_cc_default_settings() {
 function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
   module_load_include('inc', 'commerce_payment', 'includes/commerce_payment.credit_card');
   $settings += commerce_cybersource_soap_cc_default_settings();
+
+  // Required to get a list of all countries.
+  require_once DRUPAL_ROOT . '/includes/locale.inc';
 
   $form = array();
 
@@ -120,28 +152,6 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
     ),
     '#default_value' => $settings['transaction_mode'],
   );
-  $form['transaction_type'] = array(
-    '#type' => 'radios',
-    '#title' => t('Default credit card transaction type'),
-    '#description' => t('The default will be used to process transactions during checkout.'),
-    '#options' => array(
-      COMMERCE_CREDIT_AUTH_CAPTURE => t('Authorization and capture'),
-      COMMERCE_CREDIT_AUTH_ONLY => t('Authorization only (requires manual or automated capture after checkout)'),
-    ),
-    '#default_value' => $settings['transaction_type'],
-  );
-  $form['submit_itemized_order'] = array(
-    '#type' => 'checkbox',
-    '#title' => t('Submit itemized orders to CyberSource instead of just sending the grand total to authorize / capture.'),
-    '#default_value' => $settings['submit_itemized_order'],
-  );
-  $form['card_types'] = array(
-    '#type' => 'checkboxes',
-    '#title' => t('Limit accepted credit cards to the following types'),
-    '#description' => t('If none are checked, any credit card type will be accepted.'),
-    '#options' => commerce_payment_credit_card_types(),
-    '#default_value' => $settings['card_types'],
-  );
   $form['log'] = array(
     '#type' => 'checkboxes',
     '#title' => t('Log the following messages for debugging'),
@@ -150,6 +160,186 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
       'response' => t('API response messages'),
     ),
     '#default_value' => $settings['log'],
+  );
+
+  $form['credit_card'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Credit card service settings'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+  $form['credit_card']['transaction_type'] = array(
+    '#type' => 'radios',
+    '#title' => t('Default credit card transaction type'),
+    '#description' => t('The default will be used to process transactions during checkout.'),
+    '#options' => array(
+      COMMERCE_CREDIT_AUTH_CAPTURE => t('Authorization and capture'),
+      COMMERCE_CREDIT_AUTH_ONLY => t('Authorization only (requires manual or automated capture after checkout)'),
+    ),
+    '#default_value' => $settings['credit_card']['transaction_type'],
+  );
+  $form['credit_card']['submit_itemized_order'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Submit itemized orders to CyberSource instead of just sending the grand total to authorize / capture.'),
+    '#default_value' => $settings['credit_card']['submit_itemized_order'],
+  );
+  $form['credit_card']['card_types'] = array(
+    '#type' => 'checkboxes',
+    '#title' => t('Limit accepted credit cards to the following types'),
+    '#description' => t('If none are checked, any credit card type will be accepted.'),
+    '#options' => commerce_payment_credit_card_types(),
+    '#default_value' => $settings['credit_card']['card_types'],
+  );
+
+  $form['tax'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Tax service settings'),
+    '#description' => t('CyberSource offers a tax calculation service through which they will calculate taxes for your orders for a fee per request. If you have enabled this with your account and are willing to pay to calculate taxes for each order, these settings will let you properly use their tax service.'),
+    '#collapsible' => TRUE,
+    '#collapsed' => TRUE,
+  );
+  $form['tax']['calculate_taxes'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Enable tax calculation through CyberSource. This occurs during the checkout process when a customer advances to the Review page or when requested by an administrator on the back end.'),
+    '#default_value' => $settings['tax']['calculate_taxes'],
+  );
+  $form['tax']['nexus'] = array(
+    '#type' => 'textarea',
+    '#title' => t('Nexus'),
+    '#description' => t('Enter two-letter abbreviations separated by spaces representing the states or provinces where your business has nexus. This is defined as a place where you have a business address, whether it is for administrative, warehousing, or delivery purposes. Sales taxes in the U.S. and Canada will only be applied when shipping to a customer who resides in a state or province where you have nexus. Leave blank to calculate all applicable taxes for a customer irregardless of where you have nexus.'),
+    '#default_value' => $settings['tax']['nexus'],
+  );
+
+  // Generate an options list of customer profile reference fields attached to orders.
+  $options = array();
+
+  foreach (commerce_info_fields('commerce_customer_profile_reference', 'commerce_order') as $field_name => $field) {
+    $options[$field_name] = check_plain($field_name);
+  }
+
+  $form['tax']['shipping_profile'] = array(
+    '#type' => 'select',
+    '#title' => t('Shipping information reference field'),
+    '#description' => t("Select a customer profile reference field attached to your order that contains the customer's shipping address."),
+    '#options' => $options,
+    '#default_value' => $settings['tax']['shipping_profile'],
+    '#empty_value' => '',
+  );
+
+  $form['tax']['poo'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Point of order origin'),
+    '#description' => t("This is the place of business where you receive the customer's order."),
+  );
+  $form['tax']['poo']['city'] = array(
+    '#type' => 'textfield',
+    '#title' => t('City'),
+    '#default_value' => $settings['tax']['poo']['city'],
+    '#maxlength' => 50,
+  );
+  $form['tax']['poo']['state'] = array(
+    '#type' => 'textfield',
+    '#title' => t('State / Province'),
+    '#description' => t('Use the appropriate two-letter abbreviation.'),
+    '#default_value' => $settings['tax']['poo']['state'],
+    '#maxlength' => 2,
+  );
+  $form['tax']['poo']['postal_code'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Postal code'),
+    '#default_value' => $settings['tax']['poo']['postal_code'],
+    '#maxlength' => 10,
+  );
+  $form['tax']['poo']['county'] = array(
+    '#type' => 'textfield',
+    '#title' => t('County'),
+    '#default_value' => $settings['tax']['poo']['county'],
+    '#maxlength' => 50,
+  );
+  $form['tax']['poo']['country'] = array(
+    '#type' => 'select',
+    '#title' => t('Country'),
+    '#options' => country_get_list(),
+    '#default_value' => $settings['tax']['poo']['country'],
+  );
+
+  $form['tax']['poa'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Point of order acceptance'),
+    '#description' => t("This is the place of business where you accept and approve the customer’s order, thereby becoming contractually obligated to make the sale. This may be the same as your point of order origin."),
+  );
+  $form['tax']['poa']['city'] = array(
+    '#type' => 'textfield',
+    '#title' => t('City'),
+    '#default_value' => $settings['tax']['poa']['city'],
+    '#maxlength' => 50,
+  );
+  $form['tax']['poa']['state'] = array(
+    '#type' => 'textfield',
+    '#title' => t('State / Province'),
+    '#description' => t('Use the appropriate two-letter abbreviation.'),
+    '#default_value' => $settings['tax']['poa']['state'],
+    '#maxlength' => 2,
+  );
+  $form['tax']['poa']['postal_code'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Postal code'),
+    '#default_value' => $settings['tax']['poa']['postal_code'],
+    '#maxlength' => 10,
+  );
+  $form['tax']['poa']['county'] = array(
+    '#type' => 'textfield',
+    '#title' => t('County'),
+    '#default_value' => $settings['tax']['poa']['county'],
+    '#maxlength' => 50,
+  );
+  $form['tax']['poa']['country'] = array(
+    '#type' => 'select',
+    '#title' => t('Country'),
+    '#options' => country_get_list(),
+    '#default_value' => $settings['tax']['poa']['country'],
+  );
+
+  $form['tax']['origin'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Shipping origin address'),
+  );
+  $form['tax']['origin']['city'] = array(
+    '#type' => 'textfield',
+    '#title' => t('City'),
+    '#default_value' => $settings['tax']['origin']['city'],
+    '#maxlength' => 50,
+  );
+  $form['tax']['origin']['state'] = array(
+    '#type' => 'textfield',
+    '#title' => t('State / Province'),
+    '#description' => t('Use the appropriate two-letter abbreviation.'),
+    '#default_value' => $settings['tax']['origin']['state'],
+    '#maxlength' => 2,
+  );
+  $form['tax']['origin']['postal_code'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Postal code'),
+    '#default_value' => $settings['tax']['origin']['postal_code'],
+    '#maxlength' => 10,
+  );
+  $form['tax']['origin']['county'] = array(
+    '#type' => 'textfield',
+    '#title' => t('County'),
+    '#default_value' => $settings['tax']['origin']['county'],
+    '#maxlength' => 50,
+  );
+  $form['tax']['origin']['country'] = array(
+    '#type' => 'select',
+    '#title' => t('Country'),
+    '#options' => country_get_list(),
+    '#default_value' => $settings['tax']['origin']['country'],
+  );
+
+  $form['tax']['seller_registration'] = array(
+    '#type' => 'textarea',
+    '#title' => t('VAT seller registration number(s)'),
+    '#description' => t('Enter a comma-separated list of your VAT seller registration numbers.'),
   );
 
   return $form;
@@ -168,7 +358,7 @@ function commerce_cybersource_soap_cc_submit_form($payment_method, $pane_values,
   );
 
   // Add the credit card types array if necessary.
-  $card_types = array_diff(array_values($payment_method['settings']['card_types']), array(0));
+  $card_types = array_diff(array_values($payment_method['settings']['credit_card']['card_types']), array(0));
 
   if (!empty($card_types)) {
     $fields['type'] = $card_types;
@@ -197,7 +387,7 @@ function commerce_cybersource_soap_cc_submit_form_validate($payment_method, $pan
  * Payment method callback: checkout form submission.
  */
 function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_form, $pane_values, $order, $charge) {
-  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $payment_method['settings'] += commerce_cybersource_soap_cc_default_settings();
 
   // Create and populate the request object.
   $request = (object) array(
@@ -236,8 +426,8 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
   // that the total value of all the line items and their taxes does not match
   // the grandTotalAmount supplied above, the itemization will be ignored and
   // CyberSource will process the transaction based solely on that amount.
-  if ($payment_method['settings']['submit_itemized_order']) {
-    $items = commerce_cybersource_itemize_order($order_wrapper->value(), $charge['currency_code']);
+  if ($payment_method['settings']['credit_card']['submit_itemized_order']) {
+    $items = commerce_cybersource_itemize_order($order, $charge['currency_code']);
 
     if (!empty($items)) {
       $request->item = $items;
@@ -245,7 +435,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
   }
 
   // Add the capture directive if specified in the payment method settings.
-  if ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
+  if ($payment_method['settings']['credit_card']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
     $request->ccCaptureService = (object) array(
       'run' => 'true',
     );
@@ -267,7 +457,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     }
     else {
       // Otherwise if we also captured successfully, mark this as a success.
-      if ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE &&
+      if ($payment_method['settings']['credit_card']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE &&
         $response->ccCaptureReply->reasonCode == 100) {
         $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
         $transaction->remote_status = COMMERCE_CREDIT_AUTH_CAPTURE;
@@ -284,7 +474,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
 
     // Build a meaningful response message.
     $message = array(
-      '<b>' . ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_ONLY ? t('Credit Card Authorization') : t('Credit Card Authorization and Capture')) . '</b>',
+      '<b>' . ($payment_method['settings']['credit_card']['transaction_type'] == COMMERCE_CREDIT_AUTH_ONLY ? t('Credit Card Authorization') : t('Credit Card Authorization and Capture')) . '</b>',
       '<b>' . t('@decision:', array('@decision' => $response->decision)) . '</b> ' . commerce_cybersource_reason_message($response->reasonCode),
     );
 
@@ -382,18 +572,20 @@ function commerce_cybersource_address($type, $order, $field_name) {
  * @param $currency_code
  *   The currency code of the currency when calculating the unit price of all
  *   the items and taxes derived from the order's line items.
+ * @param $include_tax
+ *   Boolean indicating whether or not to include tax amounts on items if available.
  *
  * @return
  *   An array of items as expected by the CyberSource API.
  */
-function commerce_cybersource_itemize_order($order, $currency_code) {
+function commerce_cybersource_itemize_order($order, $currency_code, $include_tax = TRUE) {
   $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
   $items = array();
 
   // Loop over each line item on the order.
   foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
     $item = new stdClass();
-    $item->id = $delta;
+    $item->id = $line_item_wrapper->line_item_id->value();
 
     // See Appendix F in the Simple Order API documentation for a list of
     // available product codes. These don't necessarily pertain just to
@@ -419,7 +611,7 @@ function commerce_cybersource_itemize_order($order, $currency_code) {
     $item->quantity = $line_item_wrapper->quantity->value();
 
     // Conditionally add any non-inclusive tax included in the line item.
-    if (module_exists('commerce_tax')) {
+    if ($include_tax && module_exists('commerce_tax')) {
       $data = $line_item_wrapper->commerce_unit_price->data->value();
       $amount = commerce_tax_total_amount($data['components'], FALSE, $currency_code) * $line_item_wrapper->quantity->value();
 
@@ -445,6 +637,9 @@ function commerce_cybersource_itemize_order($order, $currency_code) {
  *   The payment transaction representing the authorization the capture is for.
  * @param $amount
  *   An integer price amount.
+ *
+ * @return
+ *   The response from CyberSource or FALSE upon failure.
  */
 function commerce_cybersource_soap_capture($order, $transaction, $amount) {
   // Load the payment method instance used to create the authorization.
@@ -492,6 +687,113 @@ function commerce_cybersource_soap_capture($order, $transaction, $amount) {
 
     commerce_payment_transaction_save($transaction);
 
+    return $response;
+  }
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * Submits a tax calculation request.
+ *
+ * @param $payment_method
+ *   The payment method instance array associated with this API request.
+ * @param $order
+ *   The order object whose taxes should be calculated.
+ *
+ * @return
+ *   The tax response from CyberSource or FALSE upon failure.
+ */
+function commerce_cybersource_soap_calculate_taxes($payment_method, $order) {
+  $payment_method['settings'] += commerce_cybersource_soap_cc_default_settings();
+  $tax_settings = $payment_method['settings']['tax'];
+
+  // If tax calculation isn't enabled, return FALSE.
+  if (!$tax_settings['calculate_taxes']) {
+    return FALSE;
+  }
+
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  // Create and populate the request object.
+  $request = (object) array(
+    'merchantReferenceCode' => t('Order @number', array('@number' => $order->order_number)),
+  );
+
+  // Request tax calculation.
+  $request->taxService = (object) array(
+    'run' => 'true',
+
+    'orderOriginCity' => $tax_settings['poo']['city'],
+    'orderOriginState' => $tax_settings['poo']['state'],
+    'orderOriginPostalCode' => $tax_settings['poo']['postal_code'],
+    'orderOriginCounty' => $tax_settings['poo']['county'],
+    'orderOriginCountry' => $tax_settings['poo']['country'],
+
+    'orderAcceptanceCity' => $tax_settings['poa']['city'],
+    'orderAcceptanceState' => $tax_settings['poa']['state'],
+    'orderAcceptancePostalCode' => $tax_settings['poa']['postal_code'],
+    'orderAcceptanceCounty' => $tax_settings['poa']['county'],
+    'orderAcceptanceCountry' => $tax_settings['poa']['country'],
+  );
+
+  // Only add the nexus property if it has been entered.
+  if (!empty($tax_settings['nexus'])) {
+    $request->taxService->nexus = $tax_settings['nexus'];
+  }
+
+  // Only add VAT seller registration numbers if they have been specified.
+  if (!empty($tax_settings['seller_registration'])) {
+    $vat_numbers = explode(',', $tax_settings['seller_registration']);
+
+    // If there is only one VAT number entered...
+    if (count($vat_numbers) == 1) {
+      // Add it as the sole VAT seller registration number.
+      $request->taxService->sellerRegistration = trim($vat_numbers[0]);
+    }
+    else {
+      // Otherwise loop over all entered numbers and add them.
+      foreach ($vat_numbers as $delta => $vat_number) {
+        $request->taxService->{'sellerRegistration' . $delta} = trim($vat_number);
+      }
+    }
+  }
+
+  // TODO: Add support for the customer's VAT registration number.
+
+  // Add an origin address for shipped items.
+  $request->shipFrom = (object) array(
+    'city' => $tax_settings['origin']['city'],
+    'state' => $tax_settings['origin']['state'],
+    'postalCode' => $tax_settings['origin']['postal_code'],
+    'county' => $tax_settings['origin']['county'],
+    'country' => $tax_settings['origin']['country'],
+  );
+
+  // Add the customer's billing information.
+  $request->billTo = commerce_cybersource_address('billing', $order, 'commerce_customer_billing');
+
+  // Add the customer's shipping information.
+  if (!empty($tax_settings['shipping_profile'])) {
+    $request->shipTo = commerce_cybersource_address('shipping', $order, $tax_settings['shipping_profile']);
+  }
+
+  // Add purchase total information.
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+
+  $request->purchaseTotals = (object) array(
+    'currency' => $currency_code,
+  );
+
+  // Itemize the line items on the order.
+  $items = commerce_cybersource_itemize_order($order, $currency_code, FALSE);
+
+  if (!empty($items)) {
+    $request->item = $items;
+  }
+
+  if ($response = commerce_cybersource_soap_api_request($payment_method, $request)) {
     return $response;
   }
   else {
