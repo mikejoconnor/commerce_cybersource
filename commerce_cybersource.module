@@ -211,28 +211,8 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     'run' => 'true',
   );
 
-  // Prepare the billing address for use in the request.
-  $billing_address = $order_wrapper->commerce_customer_billing->commerce_customer_address->value();
-
-  if (empty($billing_address['first_name'])) {
-    $name_parts = explode(' ', $billing_address['name_line']);
-    $billing_address['first_name'] = array_shift($name_parts);
-    $billing_address['last_name'] = implode(' ', $name_parts);
-  }
-
   // Add the billing information.
-  $request->billTo = (object) array(
-    'firstName' => $billing_address['first_name'],
-    'lastName' => $billing_address['last_name'],
-    'street1' => $billing_address['thoroughfare'],
-    'street2' => $billing_address['premise'],
-    'city' => $billing_address['locality'],
-    'state' => $billing_address['administrative_area'],
-    'postalCode' => $billing_address['postal_code'],
-    'country' => $billing_address['country'],
-    'email' => empty($order->mail) ? 'null@cybersource.com' : $order->mail,
-    'ipAddress' => ip_address(),
-  );
+  $request->billTo = commerce_cybersource_address('billing', $order, 'commerce_customer_billing');
 
   // Add the credit card details.
   $request->card = (object) array(
@@ -337,6 +317,63 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
 }
 
 /**
+ * Returns an address object for use in a CyberSource API request.
+ *
+ * @param $type
+ *   The type of address object to return, either 'billing' or 'shipping'.
+ *   Billing addresses include an e-mail address and IP address in addition to
+ *   the actual billing address.
+ * @param $order
+ *   The order object containing the address information via a referenced
+ *   customer profile.
+ * @param $field_name
+ *   The name of the customer profile reference field that links the order to
+ *   the proper customer profile where the address data will be retrieved from.
+ *
+ * @return
+ *   An object representing the address of the requested type for use in a
+ *   CyberSource API request.
+ */
+function commerce_cybersource_address($type, $order, $field_name) {
+  // Return an empty address object if the specified profile field doesn't exist.
+  if (empty($order->{$field_name})) {
+    return new stdClass();
+  }
+
+  // Prepare the address data for use in the request address.
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $address_data = $order_wrapper->{$field_name}->commerce_customer_address->value();
+
+  if (empty($address['first_name'])) {
+    $name_parts = explode(' ', $address_data['name_line']);
+    $address_data['first_name'] = array_shift($name_parts);
+    $address_data['last_name'] = implode(' ', $name_parts);
+  }
+
+  // Add the basic address information to the return array.
+  $address = array(
+    'firstName' => $address_data['first_name'],
+    'lastName' => $address_data['last_name'],
+    'street1' => $address_data['thoroughfare'],
+    'street2' => $address_data['premise'],
+    'city' => $address_data['locality'],
+    'state' => $address_data['administrative_area'],
+    'postalCode' => $address_data['postal_code'],
+    'country' => $address_data['country'],
+  );
+
+  // Add the e-mail and IP address to the billing information.
+  if ($type == 'billing') {
+    $address += array(
+      'email' => empty($order->mail) ? 'null@cybersource.com' : $order->mail,
+      'ipAddress' => ip_address(),
+    );
+  }
+
+  return (object) $address;
+}
+
+/**
  * Returns an array of items as expected by the CyberSource API representing the
  * line items on the order.
  *
@@ -356,6 +393,7 @@ function commerce_cybersource_itemize_order($order, $currency_code) {
   // Loop over each line item on the order.
   foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
     $item = new stdClass();
+    $item->id = $delta;
 
     // See Appendix F in the Simple Order API documentation for a list of
     // available product codes. These don't necessarily pertain just to
