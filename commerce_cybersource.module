@@ -252,47 +252,15 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     'grandTotalAmount' => commerce_currency_amount_to_decimal($charge['amount'], $charge['currency_code']),
   );
 
-  // Individually add each line item to the order if specified.
+  // Individually add each line item to the order if specified. In the event
+  // that the total value of all the line items and their taxes does not match
+  // the grandTotalAmount supplied above, the itemization will be ignored and
+  // CyberSource will process the transaction based solely on that amount.
   if ($payment_method['settings']['submit_itemized_order']) {
-    foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
-      $item = new stdClass();
+    $items = commerce_cybersource_itemize_order($order_wrapper->value(), $charge['currency_code']);
 
-      // See Appendix F in the Simple Order API documentation for a list of
-      // available product codes. These don't necessarily pertain just to
-      // physical or electronic products.
-      $item->productCode = 'default';
-
-      // Add product data if this is a product line item.
-      if (in_array($line_item_wrapper->type->value(), commerce_product_line_item_types())) {
-        $item->productName = $line_item_wrapper->commerce_product->title->value();
-        $item->productSKU = $line_item_wrapper->commerce_product->sku->value();
-      }
-      else {
-        $item->productName = $line_item_wrapper->description->value();
-        $item->productSKU = $line_item_wrapper->label->value();
-      }
-
-      // The unit price is assumed to be in the currency used in the purchase
-      // total information above.
-      $amount = $line_item_wrapper->commerce_unit_price->amount->value();
-      $currency_code = $line_item_wrapper->commerce_unit_price->currency_code->value();
-
-      $item->unitPrice = commerce_currency_amount_to_decimal(commerce_currency_convert($amount, $currency_code, $charge['currency_code']), $charge['currency_code']);
-      $item->quantity = $line_item_wrapper->quantity->value();
-
-      // Conditionally add any non-inclusive tax included in the line item.
-      if (module_exists('commerce_tax')) {
-        $data = $line_item_wrapper->commerce_unit_price->data->value();
-        $amount = commerce_tax_total_amount($data['components'], FALSE, $charge['currency_code']) * $line_item_wrapper->quantity->value();
-
-        $item->taxAmount = commerce_currency_amount_to_decimal($amount, $charge['currency_code']);;
-      }
-
-      // Give other modules a chance to alter the item before adding it.
-      drupal_alter('commerce_cybersource_item', $item, $line_item_wrapper->value());
-
-      // Add the item to the request.
-      $request->item[] = $item;
+    if (!empty($items)) {
+      $request->item = $items;
     }
   }
 
@@ -366,6 +334,68 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     drupal_set_message(t('We encountered an error contacting our payment processor. Please try submitting your payment again.'), 'error');
     return FALSE;
   }
+}
+
+/**
+ * Returns an array of items as expected by the CyberSource API representing the
+ * line items on the order.
+ *
+ * @param $order
+ *   The order to itemize.
+ * @param $currency_code
+ *   The currency code of the currency when calculating the unit price of all
+ *   the items and taxes derived from the order's line items.
+ *
+ * @return
+ *   An array of items as expected by the CyberSource API.
+ */
+function commerce_cybersource_itemize_order($order, $currency_code) {
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $items = array();
+
+  // Loop over each line item on the order.
+  foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
+    $item = new stdClass();
+
+    // See Appendix F in the Simple Order API documentation for a list of
+    // available product codes. These don't necessarily pertain just to
+    // physical or electronic products.
+    $item->productCode = 'default';
+
+    // Add product data if this is a product line item.
+    if (in_array($line_item_wrapper->type->value(), commerce_product_line_item_types())) {
+      $item->productName = $line_item_wrapper->commerce_product->title->value();
+      $item->productSKU = $line_item_wrapper->commerce_product->sku->value();
+    }
+    else {
+      $item->productName = $line_item_wrapper->description->value();
+      $item->productSKU = $line_item_wrapper->label->value();
+    }
+
+    // The unit price is assumed to be in the currency used in the purchase
+    // total information above.
+    $item_amount = $line_item_wrapper->commerce_unit_price->amount->value();
+    $item_currency_code = $line_item_wrapper->commerce_unit_price->currency_code->value();
+
+    $item->unitPrice = commerce_currency_amount_to_decimal(commerce_currency_convert($item_amount, $item_currency_code, $currency_code), $currency_code);
+    $item->quantity = $line_item_wrapper->quantity->value();
+
+    // Conditionally add any non-inclusive tax included in the line item.
+    if (module_exists('commerce_tax')) {
+      $data = $line_item_wrapper->commerce_unit_price->data->value();
+      $amount = commerce_tax_total_amount($data['components'], FALSE, $currency_code) * $line_item_wrapper->quantity->value();
+
+      $item->taxAmount = commerce_currency_amount_to_decimal($amount, $currency_code);;
+    }
+
+    // Give other modules a chance to alter the item before adding it.
+    drupal_alter('commerce_cybersource_item', $item, $line_item_wrapper->value());
+
+    // Add the item to the return value.
+    $items[] = $item;
+  }
+
+  return $items;
 }
 
 /**
