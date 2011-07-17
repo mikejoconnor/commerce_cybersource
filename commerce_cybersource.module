@@ -81,6 +81,7 @@ function commerce_cybersource_soap_cc_default_settings() {
     'transaction_key' => '',
     'transaction_mode' => CYBERSOURCE_TXN_MODE_TEST,
     'transaction_type' => COMMERCE_CREDIT_AUTH_CAPTURE,
+    'submit_itemized_order' => FALSE,
     'card_types' => array(),
     'log' => array('request' => '0', 'response' => '0'),
   );
@@ -128,6 +129,11 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
       COMMERCE_CREDIT_AUTH_ONLY => t('Authorization only (requires manual or automated capture after checkout)'),
     ),
     '#default_value' => $settings['transaction_type'],
+  );
+  $form['submit_itemized_order'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Submit itemized orders to CyberSource instead of just sending the grand total to authorize / capture.'),
+    '#default_value' => $settings['submit_itemized_order'],
   );
   $form['card_types'] = array(
     '#type' => 'checkboxes',
@@ -246,19 +252,49 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
     'grandTotalAmount' => commerce_currency_amount_to_decimal($charge['amount'], $charge['currency_code']),
   );
 
-  /**
-   * TODO: Expand later to include line item based info instead.
-  $item0 = new stdClass();
-  $item0->unitPrice = "12.34";
-  $item0->quantity = "2";
-  $item0->id = "0";
+  // Individually add each line item to the order if specified.
+  if ($payment_method['settings']['submit_itemized_order']) {
+    foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
+      $item = new stdClass();
 
-  $item1 = new stdClass();
-  $item1->unitPrice = "56.78";
-  $item1->id = "1";
+      // See Appendix F in the Simple Order API documentation for a list of
+      // available product codes. These don't necessarily pertain just to
+      // physical or electronic products.
+      $item->productCode = 'default';
 
-  $request->item = array($item0, $item1);
-   */
+      // Add product data if this is a product line item.
+      if (in_array($line_item_wrapper->type->value(), commerce_product_line_item_types())) {
+        $item->productName = $line_item_wrapper->commerce_product->title->value();
+        $item->productSKU = $line_item_wrapper->commerce_product->sku->value();
+      }
+      else {
+        $item->productName = $line_item_wrapper->description->value();
+        $item->productSKU = $line_item_wrapper->label->value();
+      }
+
+      // The unit price is assumed to be in the currency used in the purchase
+      // total information above.
+      $amount = $line_item_wrapper->commerce_unit_price->amount->value();
+      $currency_code = $line_item_wrapper->commerce_unit_price->currency_code->value();
+
+      $item->unitPrice = commerce_currency_amount_to_decimal(commerce_currency_convert($amount, $currency_code, $charge['currency_code']), $charge['currency_code']);
+      $item->quantity = $line_item_wrapper->quantity->value();
+
+      // Conditionally add any non-inclusive tax included in the line item.
+      if (module_exists('commerce_tax')) {
+        $data = $line_item_wrapper->commerce_unit_price->data->value();
+        $amount = commerce_tax_total_amount($data['components'], FALSE, $charge['currency_code']) * $line_item_wrapper->quantity->value();
+
+        $item->taxAmount = commerce_currency_amount_to_decimal($amount, $charge['currency_code']);;
+      }
+
+      // Give other modules a chance to alter the item before adding it.
+      drupal_alter('commerce_cybersource_item', $item, $line_item_wrapper->value());
+
+      // Add the item to the request.
+      $request->item[] = $item;
+    }
+  }
 
   // Add the capture directive if specified in the payment method settings.
   if ($payment_method['settings']['transaction_type'] == COMMERCE_CREDIT_AUTH_CAPTURE) {
