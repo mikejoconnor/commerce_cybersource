@@ -51,8 +51,8 @@ function commerce_cybersource_soap_capture_access($order, $transaction) {
     return FALSE;
   }
 
-  // Allow access if the user can update payments on this order.
-  return commerce_payment_transaction_access('update', $order, $transaction);
+  // Allow access if the user can update payments on this transaction.
+  return commerce_payment_transaction_access('update', $transaction);
 }
 
 /**
