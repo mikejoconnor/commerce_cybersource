@@ -534,7 +534,7 @@ function commerce_cybersource_address($type, $order, $field_name) {
   $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
   $address_data = $order_wrapper->{$field_name}->commerce_customer_address->value();
 
-  if (empty($address['first_name'])) {
+  if (empty($address_data['first_name'])) {
     $name_parts = explode(' ', $address_data['name_line']);
     $address_data['first_name'] = array_shift($name_parts);
     $address_data['last_name'] = implode(' ', $name_parts);
