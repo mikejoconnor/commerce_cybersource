@@ -89,6 +89,8 @@ function commerce_cybersource_soap_cc_default_settings() {
       'calculate_taxes' => FALSE,
       'nexus' => '',
       'shipping_profile' => '',
+      'product_code_field' => '',
+      'default_product_code' => 'default',
       'poo' => array(
         'city' => '',
         'state' => '',
@@ -224,6 +226,29 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
     '#options' => $options,
     '#default_value' => $settings['tax']['shipping_profile'],
     '#empty_value' => '',
+  );
+
+  // Generate an options list of customer profile reference fields attached to orders.
+  $options = array();
+
+  foreach (commerce_info_fields('text', 'commerce_product') as $field_name => $field) {
+    $options[$field_name] = check_plain($field_name);
+  }
+
+  $form['tax']['product_code_field'] = array(
+    '#type' => 'select',
+    '#title' => t('Product code field'),
+    '#description' => t("Select a product field that contains the CyberSource product code."),
+    '#options' => $options,
+    '#default_value' => $settings['tax']['product_code_field'],
+    '#empty_value' => '',
+  );
+
+  $form['tax']['default_product_code'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Default product code'),
+    '#description' => t(""),
+    '#default_value' => $settings['tax']['default_product_code'],
   );
 
   $form['tax']['poo'] = array(
@@ -427,7 +452,7 @@ function commerce_cybersource_soap_cc_submit_form_submit($payment_method, $pane_
   // the grandTotalAmount supplied above, the itemization will be ignored and
   // CyberSource will process the transaction based solely on that amount.
   if ($payment_method['settings']['credit_card']['submit_itemized_order']) {
-    $items = commerce_cybersource_itemize_order($order, $charge['currency_code']);
+    $items = commerce_cybersource_itemize_order($order, $charge['currency_code'], $payment_method);
 
     if (!empty($items)) {
       $request->item = $items;
@@ -578,28 +603,36 @@ function commerce_cybersource_address($type, $order, $field_name) {
  * @return
  *   An array of items as expected by the CyberSource API.
  */
-function commerce_cybersource_itemize_order($order, $currency_code, $include_tax = TRUE) {
+function commerce_cybersource_itemize_order($order, $currency_code, $payment_method, $include_tax = TRUE) {
+  $payment_method['settings'] += commerce_cybersource_soap_cc_default_settings();
+  $tax_settings = $payment_method['settings']['tax'];
   $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
   $items = array();
 
   // Loop over each line item on the order.
   foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
     $item = new stdClass();
-    $item->id = $line_item_wrapper->line_item_id->value();
-
-    // See Appendix F in the Simple Order API documentation for a list of
-    // available product codes. These don't necessarily pertain just to
-    // physical or electronic products.
-    $item->productCode = 'default';
+    $item->id = $delta;
 
     // Add product data if this is a product line item.
     if (in_array($line_item_wrapper->type->value(), commerce_product_line_item_types())) {
       $item->productName = $line_item_wrapper->commerce_product->title->value();
       $item->productSKU = $line_item_wrapper->commerce_product->sku->value();
+
+      // See Appendix F in the Simple Order API documentation for a list of
+      // available product codes. These don't necessarily pertain just to
+      // physical or electronic products.
+      if (!empty($tax_settings['product_code_field'])) {
+        $item->productCode = $line_item_wrapper->commerce_product->{$tax_settings['product_code_field']}->value();
+      }
+      else {
+        $item->productCode = $tax_settings['default_product_code'];
+      }
     }
     else {
-      $item->productName = $line_item_wrapper->description->value();
-      $item->productSKU = $line_item_wrapper->label->value();
+      $item->productName = $line_item_wrapper->line_item_label->value();
+      $item->productSKU = $line_item_wrapper->type->value();
+      $item->productCode = $tax_settings['default_product_code'];
     }
 
     // The unit price is assumed to be in the currency used in the purchase
@@ -787,7 +820,7 @@ function commerce_cybersource_soap_calculate_taxes($payment_method, $order) {
   );
 
   // Itemize the line items on the order.
-  $items = commerce_cybersource_itemize_order($order, $currency_code, FALSE);
+  $items = commerce_cybersource_itemize_order($order, $currency_code, $payment_method, FALSE);
 
   if (!empty($items)) {
     $request->item = $items;
