@@ -88,6 +88,7 @@ function commerce_cybersource_soap_cc_default_settings() {
     'tax' => array(
       'calculate_taxes' => FALSE,
       'nexus' => '',
+      'nexus_states_only' => FALSE,
       'shipping_profile' => '',
       'product_code_field' => '',
       'default_product_code' => 'default',
@@ -210,6 +211,12 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
     '#title' => t('Nexus'),
     '#description' => t('Enter two-letter abbreviations separated by spaces representing the states or provinces where your business has nexus. This is defined as a place where you have a business address, whether it is for administrative, warehousing, or delivery purposes. Sales taxes in the U.S. and Canada will only be applied when shipping to a customer who resides in a state or province where you have nexus. Leave blank to calculate all applicable taxes for a customer irregardless of where you have nexus.'),
     '#default_value' => $settings['tax']['nexus'],
+  );
+
+  $form['tax']['nexus_states_only'] = array(
+    '#type' => 'checkbox',
+    '#title' => t('Only perform lookup with tax calculation when address from shipping information reference field matches a state where your business has nexus.'),
+    '#default_value' => $settings['tax']['nexus_states_only'],
   );
 
   // Generate an options list of customer profile reference fields attached to orders.
@@ -1106,6 +1113,18 @@ function commerce_cybersource_commerce_tax_type_calculate_rates($tax_type, $line
   if ($payment_method['method_id'] != 'cybersource_soap_cc' || $payment_method['settings']['tax']['calculate_taxes'] != TRUE) {
     // @TODO should tax be processed for orders using other payment methods?
     return;
+  }
+
+  $tax_settings = $payment_method['settings']['tax'];
+  // Check to see if we only process for states where we have nexus.
+  if ($tax_settings['nexus_states_only']) {
+    if (!empty($tax_settings['shipping_profile'])) {
+      $shipping_address = commerce_cybersource_address('shipping', $order, $tax_settings['shipping_profile']);
+      $nexus_states = explode(' ', $tax_settings['nexus']);
+      if (!in_array($shipping_address->state, $nexus_states)) {
+        return;
+      }
+    }
   }
 
   if ($tax_type['name'] == 'sales_tax') {
