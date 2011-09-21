@@ -89,6 +89,7 @@ function commerce_cybersource_soap_cc_default_settings() {
       'calculate_taxes' => FALSE,
       'nexus' => '',
       'nexus_states_only' => FALSE,
+      'storage' => 'total',
       'shipping_profile' => '',
       'product_code_field' => '',
       'default_product_code' => 'default',
@@ -217,6 +218,13 @@ function commerce_cybersource_soap_cc_settings_form($settings = NULL) {
     '#type' => 'checkbox',
     '#title' => t('Only perform lookup with tax calculation when address from shipping information reference field matches a state where your business has nexus.'),
     '#default_value' => $settings['tax']['nexus_states_only'],
+  );
+
+  $form['tax']['storage'] = array(
+    '#type' => 'select',
+    '#title' => t('Choose a method for storing tax calculation lookup in line items.'),
+    '#default_value' => $settings['tax']['storage'],
+    '#options' => array('total' => t('Total only'), 'itemized' => t('Itemized')),
   );
 
   // Generate an options list of customer profile reference fields attached to orders.
@@ -1147,6 +1155,7 @@ function commerce_cybersource_calculate_line_item_sales_tax($order, $line_item, 
   $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
 
   $cybersource_price_components = commerce_cybersource_commerce_price_component_type_info();
+  $tax_settings = $payment_method['settings']['tax'];
 
   foreach ($line_item_tax as $key => $decimal) {
     $amount = commerce_currency_decimal_to_amount($decimal, $currency_code);
@@ -1159,12 +1168,15 @@ function commerce_cybersource_calculate_line_item_sales_tax($order, $line_item, 
         'data' => array(),
       );
 
-      $line_item_wrapper->commerce_unit_price->data = commerce_price_component_add(
-        $line_item_wrapper->commerce_unit_price->value(),
-        $component_name,
-        $price_component,
-        $cybersource_price_components[$component_name]['included']
-      );
+      // Check which storage method we are using and only store matching components
+      if ($cybersource_price_components[$component_name]['storage'] == $tax_settings['storage']) {
+        $line_item_wrapper->commerce_unit_price->data = commerce_price_component_add(
+          $line_item_wrapper->commerce_unit_price->value(),
+          $component_name,
+          $price_component,
+          $cybersource_price_components[$component_name]['included']
+        );
+      }
     }
   }
 
@@ -1208,7 +1220,6 @@ function commerce_cybersource_fetch_tax_calculation($order, $payment_method) {
       return FALSE;
     }
   }
-
   return $orders[$order->order_number];
 }
 
@@ -1222,26 +1233,31 @@ function commerce_cybersource_commerce_price_component_type_info() {
     'title' => 'cityTaxAmount',
     'display_title' => t('City tax'),
     'included' => FALSE,
+    'storage' => 'itemized',
   );
   $components['commerce_cybersource|countyTaxAmount'] = array(
     'title' => 'countyTaxAmount',
     'display_title' => t('County tax'),
     'included' => FALSE,
+    'storage' => 'itemized',
   );
   $components['commerce_cybersource|districtTaxAmount'] = array(
     'title' => 'districtTaxAmount',
     'display_title' => t('District tax'),
     'included' => FALSE,
+    'storage' => 'itemized',
   );
   $components['commerce_cybersource|stateTaxAmount'] = array(
     'title' => 'stateTaxAmount',
     'display_title' => t('State tax'),
     'included' => FALSE,
+    'storage' => 'itemized',
   );
   $components['commerce_cybersource|totalTaxAmount'] = array(
     'title' => 'totalTaxAmount',
     'display_title' => t('Total sales tax'),
     'included' => TRUE,
+    'storage' => 'total',
   );
 
   return $components;
