@@ -1087,3 +1087,143 @@ function commerce_cybersource_cvn_response($code) {
 
   return '-';
 }
+
+/**
+ * Implements hook_commerce_tax_type_calculate_rates().
+ */
+function commerce_cybersource_commerce_tax_type_calculate_rates($tax_type, $line_item) {
+  $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+  $order = $line_item_wrapper->order->value();
+
+  // This should prevent calculation for orders that are in the cart.
+  if (empty($order->data['payment_method']) || $order->status == 'cart') {
+    // @TODO determine criteria for processing order if no payment method
+    return;
+  }
+
+  $payment_method = commerce_payment_method_instance_load($order->data['payment_method']);
+  // Determine whether or not to process tax for this line item/order
+  if ($payment_method['method_id'] != 'cybersource_soap_cc' || $payment_method['settings']['tax']['calculate_taxes'] != TRUE) {
+    // @TODO should tax be processed for orders using other payment methods?
+    return;
+  }
+
+  if ($tax_type['name'] == 'sales_tax') {
+    commerce_cybersource_calculate_line_item_sales_tax($order, $line_item, $payment_method);
+  }
+
+}
+
+/**
+ * @param $order
+ * @param $line_item
+ * @return void
+ */
+function commerce_cybersource_calculate_line_item_sales_tax($order, $line_item, $payment_method) {
+  $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  $tax_response = commerce_cybersource_fetch_tax_calculation($order, $payment_method);
+  $line_item_tax = $tax_response['items'][$line_item_wrapper->line_item_id->value()];
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+
+  $cybersource_price_components = commerce_cybersource_commerce_price_component_type_info();
+
+  foreach ($line_item_tax as $key => $decimal) {
+    $amount = commerce_currency_decimal_to_amount($decimal, $currency_code);
+    if ($amount > 0) {
+      $component_name = 'commerce_cybersource|' . $key;
+
+      $price_component = array(
+        'amount' => $amount,
+        'currency_code' => $currency_code,
+        'data' => array(),
+      );
+
+      $line_item_wrapper->commerce_unit_price->data = commerce_price_component_add(
+        $line_item_wrapper->commerce_unit_price->value(),
+        $component_name,
+        $price_component,
+        $cybersource_price_components[$component_name]['included']
+      );
+    }
+  }
+
+}
+
+/**
+ * Cache the response from an SOAP request and return the tax information for an
+ * order.
+ *
+ * @param $order
+ *   A commerce_order object.
+ * @param $payment_method
+ *   A payment_method instance.
+ *
+ * @return
+ *   An array of the taxReply from CyberSource and items keyed by line_item_id.
+ */
+function commerce_cybersource_fetch_tax_calculation($order, $payment_method) {
+  $orders = &drupal_static(__FUNCTION__);
+
+  if (!isset($orders[$order->order_number])) {
+    if ($response = commerce_cybersource_soap_calculate_taxes($payment_method, $order)) {
+      $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+      $order_items = array();
+
+      // Loop over each line item on the order.
+      foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
+        $order_items[$line_item_wrapper->line_item_id->value()] = $response->taxReply->item[$delta];
+        unset($order_items[$line_item_wrapper->line_item_id->value()]->id);
+      }
+
+      $summary = $response->taxReply;
+      unset($summary->item);
+
+      $orders[$order->order_number] = array(
+        'items' => $order_items,
+        'taxReply' => $summary,
+      );
+    }
+    else {
+      return FALSE;
+    }
+  }
+
+  return $orders[$order->order_number];
+}
+
+/**
+ * Implements hook_commerce_price_component_type_info().
+ */
+function commerce_cybersource_commerce_price_component_type_info() {
+  $components = array();
+
+  $components['commerce_cybersource|cityTaxAmount'] = array(
+    'title' => 'cityTaxAmount',
+    'display_title' => t('City tax'),
+    'included' => FALSE,
+  );
+  $components['commerce_cybersource|countyTaxAmount'] = array(
+    'title' => 'countyTaxAmount',
+    'display_title' => t('County tax'),
+    'included' => FALSE,
+  );
+  $components['commerce_cybersource|districtTaxAmount'] = array(
+    'title' => 'districtTaxAmount',
+    'display_title' => t('District tax'),
+    'included' => FALSE,
+  );
+  $components['commerce_cybersource|stateTaxAmount'] = array(
+    'title' => 'stateTaxAmount',
+    'display_title' => t('State tax'),
+    'included' => FALSE,
+  );
+  $components['commerce_cybersource|totalTaxAmount'] = array(
+    'title' => 'totalTaxAmount',
+    'display_title' => t('Total sales tax'),
+    'included' => TRUE,
+  );
+
+  return $components;
+}
