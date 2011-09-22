@@ -1255,7 +1255,7 @@ function commerce_cybersource_commerce_price_component_type_info() {
   );
   $components['commerce_cybersource|totalTaxAmount'] = array(
     'title' => 'totalTaxAmount',
-    'display_title' => t('Total sales tax'),
+    'display_title' => t('Sales tax'),
     'included' => TRUE,
     'storage' => 'total',
   );
